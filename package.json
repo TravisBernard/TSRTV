@@ -1,0 +1,34 @@
+{
+  "name": "@travbern/tsrtv",
+  "description": "A TypeScript Runtime Validation (TSRTV) library",
+  "license": "MIT",
+  "author": "Travis Bernard <ibuildtheweb@gmail.com>",
+  "repository": "github:TravisBernard/TSRTV",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    "./*": {
+      "types": "./src/*.ts",
+      "default": "./dist/*.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "oxc-parser": "^0.82.3",
+    "oxc-walker": "^0.4.0"
+  },
+  "devDependencies": {
+    "@tsconfig/node-ts": "^23.6.1",
+    "@tsconfig/node22": "^22.0.2",
+    "@types/node": "^24.3.0",
+    "tsx": "^4.20.4",
+    "typescript": "~5.9.2"
+  },
+  "imports": {
+    "#*": "./dist/*.js"
+  }
+}
