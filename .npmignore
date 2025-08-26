@@ -1,0 +1,15 @@
+# Ignore everything except the dist folder
+*
+!dist/
+
+# Ignore test files
+src/**/*.test.ts
+
+# Ignore configuration files
+!.npmrc
+!.env
+
+# Ignore development files
+!.github/
+node_modules/
+.DS_Store

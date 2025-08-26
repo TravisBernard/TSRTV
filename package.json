@@ -1,34 +1,55 @@
 {
-  "name": "@travbern/tsrtv",
-  "description": "A TypeScript Runtime Validation (TSRTV) library",
-  "license": "MIT",
-  "author": "Travis Bernard <ibuildtheweb@gmail.com>",
-  "repository": "github:TravisBernard/TSRTV",
-  "version": "0.0.1",
-  "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "exports": {
-    "./*": {
-      "types": "./src/*.ts",
-      "default": "./dist/*.js"
-    }
-  },
-  "scripts": {
-    "build": "tsc"
-  },
-  "dependencies": {
-    "oxc-parser": "^0.82.3",
-    "oxc-walker": "^0.4.0"
-  },
-  "devDependencies": {
-    "@tsconfig/node-ts": "^23.6.1",
-    "@tsconfig/node22": "^22.0.2",
-    "@types/node": "^24.3.0",
-    "tsx": "^4.20.4",
-    "typescript": "~5.9.2"
-  },
-  "imports": {
-    "#*": "./dist/*.js"
-  }
+    "name": "@travbern/tsrtv",
+    "version": "0.0.1",
+    "description": "A TypeScript Runtime Validation (TSRTV) library",
+    "type": "module",
+    "scripts": {
+        "build:clean": "rm -rf ./dist",
+        "build:esm": "tsc",
+        "build:cjs": "tsc -p tsconfig.cjs.json",
+        "build": "npm run build:clean && npm run build:esm && npm run build:cjs",
+        "test": "tsx --test src/**/*.test.ts",
+        "check": "biome check .",
+        "fix": "biome check . --write"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/TravisBernard/result-util.git"
+    },
+    "author": "Travis Bernard <ibuildtheweb@gmail.com>",
+    "license": "MIT",
+    "bugs": {
+        "url": "https://github.com/TravisBernard/result-util/issues"
+    },
+    "homepage": "https://github.com/TravisBernard/result-util#readme",
+    "dependencies": {
+        "@travbern/result-util": "^1.0.1",
+        "oxc-parser": "^0.82.3",
+        "oxc-walker": "^0.4.0"
+    },
+    "devDependencies": {
+        "@biomejs/biome": "2.2.2",
+        "@types/node": "24.3.0",
+        "lefthook": "^1.12.3",
+        "tsx": "4.20.4",
+        "typescript": "5.9.2"
+    },
+    "files": [
+        "dist"
+    ],
+    "exports": {
+        "./*": {
+            "import": {
+                "types": "./dist/types/*.d.ts",
+                "default": "./dist/esm/*.js"
+            },
+            "require": {
+                "types": "./dist/types/*.d.ts",
+                "default": "./dist/cjs/*.js"
+            }
+        }
+    },
+    "main": "./dist/cjs/index.js",
+    "module": "./dist/esm/index.js",
+    "types": "./dist/types/index.d.ts"
 }
