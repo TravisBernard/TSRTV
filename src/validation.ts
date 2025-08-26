@@ -4,7 +4,7 @@ import {
     Ok,
     type Result,
     unwrapErrSilently,
-    unwrapOk,
+    unwrapOkSilently,
 } from "@travbern/result-util";
 import {
     parseSync,
@@ -12,8 +12,8 @@ import {
     type TSTypeAliasDeclaration,
 } from "oxc-parser";
 import { walk } from "oxc-walker";
-
-const TS_EXTENSIONS = [".ts", ".d.ts", ".tsx", ".cts", ".mts"];
+import { getTypeChecker } from "./checkers";
+import { locateTypeScriptFile } from "./pathResolution";
 
 type Validator = (data: unknown) => Result<undefined, ValidationError[]>;
 
@@ -27,16 +27,20 @@ export class ValidationError extends Error {}
 
 export class GenerationError extends Error {}
 
+// TODO: support for scoping rules (export, block scope, etc)
+// TODO: support for namespaces/modules
+// TODO: type aliases that aren't objects `type foo = string`
+
 export function createTypeValidator(
     type: string,
     path?: string,
 ): Result<Validator, GenerationError> {
     const startTime = Date.now();
+
     console.debug(`Locating the file`);
     let tsPath: string | null = null;
     // If the path is not a TS file or has no extension, look for the nearest TS file
     try {
-        path = resolvePath(path);
         console.info(`Looking for file (${path})`);
         tsPath = locateTypeScriptFile(path);
         if (!tsPath) {
@@ -52,6 +56,7 @@ export function createTypeValidator(
         );
     }
 
+    // TODO: Extract function to read and parse TS file
     console.debug("Reading TypeScript file");
     let tsCodeBuf: string;
     try {
@@ -70,6 +75,7 @@ export function createTypeValidator(
     console.debug(`Parsing TypeScript file`);
     const { program: ast } = parseSync(tsPath, tsCodeBuf);
 
+    // TODO: Extract function to generate validations list from AST
     console.debug("Generating list of validations");
 
     const validations: Validation[] = [];
@@ -94,59 +100,39 @@ export function createTypeValidator(
                     node.type ===
                     "TSPropertySignature" /* || node.type === "TSMethodSignature" */
                 ) {
-                    const { name, optional = false } =
+                    const { name: field, optional = false } =
                         node.key.type === "Identifier" ? node.key : {};
-                    if (name) {
+                    if (field) {
+                        const typeAnnotation =
+                            node.typeAnnotation?.typeAnnotation?.type;
+                        if (!typeAnnotation) {
+                            console.error(
+                                `Skipping property ${field} with no type annotation in ${node.type}`,
+                            );
+                            return;
+                        }
                         const validation: Partial<Validation> = {
-                            field: name,
+                            field,
                             optional,
+                            checkFn: unwrapOkSilently(
+                                getTypeChecker({
+                                    field: field,
+                                    typeAnnotation,
+                                }),
+                            ),
                         };
-                        switch (node.typeAnnotation?.typeAnnotation?.type) {
-                            case "TSBooleanKeyword":
-                                validation.checkFn = (value: unknown) =>
-                                    typeof value === "boolean"
-                                        ? Ok()
-                                        : Err(
-                                              new ValidationError(
-                                                  `Expected boolean for ${name}, got ${typeof value}`,
-                                              ),
-                                          );
-                                break;
-                            case "TSStringKeyword":
-                                validation.checkFn = (value: unknown) =>
-                                    typeof value === "string"
-                                        ? Ok()
-                                        : Err(
-                                              new ValidationError(
-                                                  `Expected string for ${name}, got ${typeof value}`,
-                                              ),
-                                          );
-                                break;
-                            case "TSNumberKeyword":
-                                validation.checkFn = (value: unknown) =>
-                                    typeof value === "number"
-                                        ? Ok()
-                                        : Err(
-                                              new ValidationError(
-                                                  `Expected number for ${name}, got ${typeof value}`,
-                                              ),
-                                          );
-                                break;
-                            default:
-                                console.warn(
-                                    `Skipping unsupported type annotation in ${node.type}`,
-                                );
-                        }
-                        if (validation.checkFn) {
-                            console.debug(
-                                `Adding validation for ${name} in ${node.type}`,
+
+                        if (!validation.checkFn) {
+                            console.error(
+                                `No checker available for field ${field} with type annotation: ${typeAnnotation}`,
                             );
-                            validations.push(validation as Validation);
-                        } else {
-                            console.warn(
-                                `Skipping property ${name} with no check function in ${node.type}`,
-                            );
+                            return;
                         }
+
+                        console.debug(
+                            `Adding validation for ${field} in ${node.type}`,
+                        );
+                        validations.push(validation as Validation);
                     } else {
                         console.warn(
                             `Skipping property with no name in ${node.type}`,
@@ -165,6 +151,7 @@ export function createTypeValidator(
 
     console.log(`Found ${validations.length} validations for type ${type}`);
 
+    // TODO: Extract function to create validator from validations list
     const validate: Validator = (data) => {
         if (!validations.length) {
             return Ok(); // Nothing to validate
@@ -194,80 +181,3 @@ export function createTypeValidator(
     console.debug(`Validator generated in ${Date.now() - startTime}ms`);
     return Ok(validate);
 }
-
-function resolvePath(path: string | undefined) {
-    // @ts-expect-error -- TS1343: import.meta is not available when building for CJS
-    if (import.meta?.resolve) {
-        // @ts-expect-error -- TS1343: import.meta is not available when building for CJS
-        path = path ? import.meta.resolve(path) : import.meta.url;
-    } else {
-        path = path ? require.resolve(path) : __filename;
-    }
-    return path;
-}
-
-// TODO: type aliases that aren't objects `type foo = string`
-// TODO: support for nested objects
-// TODO: support for arrays
-// TODO: support for reusing other types
-// TODO: support for namespaces/modules
-// TODO: support for scoping rules (export, block scope, etc)
-// TODO: support for unions and intersections
-
-function locateTypeScriptFile(path: string): string | null {
-    const [, _protocol, usePath] = path.match(/^(.*:\/\/)(.*?)$/) ?? [];
-    const [, extensionless, ext] = usePath.match(/^(.*?)(\.[^.]+)?$/) ?? [];
-    console.log(`File extension is ${ext ?? "none"}`);
-    if (!TS_EXTENSIONS.includes(ext)) {
-        console.info(
-            `Extension ${ext} is not a TypeScript file, checking for alternatives...`,
-        );
-        // Look for a ts file in the same directory
-        for (const extn of TS_EXTENSIONS) {
-            const tsPath = `${extensionless}${extn}`;
-            console.info(`Checking for TypeScript file at ${tsPath}`);
-            if (fs.existsSync(tsPath)) {
-                console.info(
-                    `${extensionless} was not a TypeScript file so using ${tsPath} instead`,
-                );
-                return tsPath;
-            }
-        }
-        return null;
-    }
-
-    if (!fs.existsSync(usePath)) {
-        console.info(`File ${usePath} does not exist`);
-        return null;
-    }
-
-    console.info(`File ${usePath} will be used`);
-    return usePath;
-}
-
-// validateType("DocumentType");
-// console.info("---");
-const validate = unwrapOk<Validator>(
-    createTypeValidator("DocumentType", "./document.ts"),
-);
-
-console.info("Validation function created successfully");
-console.log(
-    "Validating example data...",
-    validate({ id: "abc", title: "foo", content: "Hello, world!" }),
-);
-console.log(
-    "Validating invalid data...",
-    validate({ id: 123, title: null, content: false }),
-);
-
-// console.info("---");
-// validateType("DocumentType", "./document");
-// console.info("---");
-// validateType("DocumentType", "#document");
-// console.info("---");
-// validateType("DocumentType", "./document.js");
-// console.info("---");
-// validateType("DocumentType", "./foo.ts");
-// console.info("---");
-// validateType("DocumentType", "foo");
