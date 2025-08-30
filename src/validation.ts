@@ -4,9 +4,10 @@ import {
     Ok,
     type Result,
     unwrapErrSilently,
-    unwrapOkSilently,
+    unwrapOk,
 } from "@travbern/result-util";
 import {
+    type Program,
     parseSync,
     type TSInterfaceDeclaration,
     type TSTypeAliasDeclaration,
@@ -36,148 +37,173 @@ export function createTypeValidator(
     path?: string,
 ): Result<Validator, GenerationError> {
     const startTime = Date.now();
+    let tsPath: string;
+    let ast: Program;
+    let validations: Validation[];
 
-    console.debug(`Locating the file`);
-    let tsPath: string | null = null;
-    // If the path is not a TS file or has no extension, look for the nearest TS file
     try {
-        console.info(`Looking for file (${path})`);
-        tsPath = locateTypeScriptFile(path);
-        if (!tsPath) {
-            return Err(
-                new GenerationError(
-                    `Could not find a TypeScript file for path: ${path}`,
-                ),
-            );
-        }
-    } catch (e) {
-        return Err(
-            new GenerationError(`Error resolving ${path}: ${String(e)}`),
-        );
-    }
-
-    // TODO: Extract function to read and parse TS file
-    console.debug("Reading TypeScript file");
-    let tsCodeBuf: string;
-    try {
-        tsCodeBuf = fs.readFileSync(tsPath, "utf-8");
-        if (tsCodeBuf.length === 0) {
-            throw new Error(`File ${tsPath} is empty`);
-        }
+        tsPath = unwrapOk(locateTypeScriptFile(path));
     } catch (e) {
         return Err(
             new GenerationError(
-                `Error reading TypeScript file ${tsPath}: ${String(e)}`,
+                `Error resolving ${path} to a typescript file: ${String(e)}`,
             ),
         );
     }
 
-    console.debug(`Parsing TypeScript file`);
-    const { program: ast } = parseSync(tsPath, tsCodeBuf);
+    try {
+        ast = unwrapOk(parseFile(tsPath));
+    } catch (e) {
+        return Err(
+            new GenerationError(
+                `Error parsing TypeScript file ${tsPath}: ${String(e)}`,
+            ),
+        );
+    }
 
-    // TODO: Extract function to generate validations list from AST
-    console.debug("Generating list of validations");
+    try {
+        validations = unwrapOk(createValidationsList(ast, type));
+    } catch (e) {
+        return Err(
+            new GenerationError(
+                `Error generating validations for type ${type}: ${String(e)}`,
+            ),
+        );
+    }
 
+    const validator = createValidator(validations);
+
+    // TODO: Cache the validator based on path+type
+
+    console.debug(`Validator generated in ${Date.now() - startTime}ms`);
+    return Ok(validator);
+}
+
+function createValidator(validations: Validation[]): Validator {
+    return (data: unknown) => {
+        if (!validations.length) {
+            return Ok(); // Nothing to validate
+        }
+
+        const errors = validations.reduce<ValidationError[]>(
+            (acc, validation) => {
+                const err = unwrapErrSilently<ValidationError>(
+                    validateOne(data as Record<string, unknown>, validation),
+                );
+                if (err) {
+                    acc.push(err);
+                }
+                return acc;
+            },
+            [],
+        );
+
+        return errors.length ? Err(errors) : Ok();
+    };
+}
+
+function validateOne(
+    data: Record<string, unknown>,
+    validation: Validation,
+): Result<undefined, ValidationError> {
+    const { field, optional, checkFn } = validation;
+    if (!(field in data)) {
+        if (optional) {
+            return Ok();
+        } else {
+            return Err(new ValidationError(`Missing required field: ${field}`));
+        }
+    }
+    return checkFn(data[field]);
+}
+
+function createValidationsList(ast: Program, target: string) {
     const validations: Validation[] = [];
 
     let foundType: TSInterfaceDeclaration | TSTypeAliasDeclaration | null =
         null;
-    walk(ast, {
-        enter(node) {
-            // Look for the base node
-            if (
-                !foundType &&
-                (node.type === "TSInterfaceDeclaration" ||
-                    node.type === "TSTypeAliasDeclaration") &&
-                node.id.name === type
-            ) {
-                foundType = node;
-                return;
-            }
-            // Look for properties within the base node
-            if (foundType) {
+    try {
+        walk(ast, {
+            enter(node) {
+                // Look for the target node
                 if (
-                    node.type ===
-                    "TSPropertySignature" /* || node.type === "TSMethodSignature" */
+                    !foundType &&
+                    (node.type === "TSInterfaceDeclaration" ||
+                        node.type === "TSTypeAliasDeclaration") &&
+                    node.id.name === target
                 ) {
-                    const { name: field, optional = false } =
-                        node.key.type === "Identifier" ? node.key : {};
-                    if (field) {
-                        const typeAnnotation =
-                            node.typeAnnotation?.typeAnnotation?.type;
-                        if (!typeAnnotation) {
-                            console.error(
-                                `Skipping property ${field} with no type annotation in ${node.type}`,
-                            );
-                            return;
-                        }
-                        const validation: Partial<Validation> = {
-                            field,
-                            optional,
-                            checkFn: unwrapOkSilently(
-                                getTypeChecker({
-                                    field: field,
-                                    typeAnnotation,
-                                }),
-                            ),
-                        };
+                    foundType = node;
+                    return;
+                }
+                // Look for properties within the target node
+                if (foundType) {
+                    if (
+                        node.type ===
+                        "TSPropertySignature" /* || node.type === "TSMethodSignature" */
+                    ) {
+                        const { name: field, optional = false } =
+                            node.key.type === "Identifier" ? node.key : {};
+                        if (field) {
+                            const typeAnnotation =
+                                node.typeAnnotation?.typeAnnotation?.type;
+                            if (!typeAnnotation) {
+                                throw new Error(
+                                    `Unrecognized type annotation for field ${field}`,
+                                );
+                            }
+                            const validation: Partial<Validation> = {
+                                field,
+                                optional,
+                                checkFn: unwrapOk(
+                                    getTypeChecker({
+                                        field: field,
+                                        typeAnnotation,
+                                    }),
+                                ),
+                            };
 
-                        if (!validation.checkFn) {
-                            console.error(
-                                `No checker available for field ${field} with type annotation: ${typeAnnotation}`,
-                            );
-                            return;
+                            validations.push(validation as Validation);
                         }
-
-                        console.debug(
-                            `Adding validation for ${field} in ${node.type}`,
-                        );
-                        validations.push(validation as Validation);
-                    } else {
-                        console.warn(
-                            `Skipping property with no name in ${node.type}`,
-                        );
                     }
                 }
-            }
-        },
-        leave(node) {
-            if (node === foundType) {
-                foundType = null;
-                return false;
-            }
-        },
-    });
-
-    console.log(`Found ${validations.length} validations for type ${type}`);
-
-    // TODO: Extract function to create validator from validations list
-    const validate: Validator = (data) => {
-        if (!validations.length) {
-            return Ok(); // Nothing to validate
-        }
-        const errors = validations
-            .map((validation) => {
-                const { field, optional, checkFn } = validation;
-                const value = (data as Record<string, unknown>)[field];
-                if (value === undefined) {
-                    if (!optional) {
-                        return new ValidationError(
-                            `Missing required field: ${field}`,
-                        );
-                    }
-                    return undefined; // Skip optional fields
+            },
+            leave(node) {
+                if (node === foundType) {
+                    foundType = null;
+                    return false;
                 }
-                return unwrapErrSilently(checkFn(value));
-            })
-            .filter((e) => !!e);
+            },
+        });
+        return Ok(validations);
+    } catch (e) {
+        return Err(
+            new GenerationError(
+                `Error walking AST for type ${target}: ${String(e)}`,
+            ),
+        );
+    }
+}
 
-        if (!errors.length) {
-            return Ok();
+function parseFile(filePath: string): Result<Program, GenerationError> {
+    let tsCodeBuf: string;
+    try {
+        tsCodeBuf = fs.readFileSync(filePath, "utf-8");
+        if (tsCodeBuf.length === 0) {
+            throw new Error(`File is empty`); // this will get immediately caught
         }
-        return Err(errors as ValidationError[]);
-    };
+    } catch (e) {
+        return Err(
+            new GenerationError(`Error reading file ${filePath}: ${String(e)}`),
+        );
+    }
 
-    console.debug(`Validator generated in ${Date.now() - startTime}ms`);
-    return Ok(validate);
+    const { program: ast } = parseSync(filePath, tsCodeBuf);
+
+    if (!ast) {
+        return Err(
+            new GenerationError(`Could not parse TypeScript file ${filePath}`),
+        );
+    }
+
+    return Ok(ast);
 }

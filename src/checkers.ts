@@ -29,13 +29,6 @@ export function getTypeChecker({
     );
 }
 
-export const makeCheckerOptional = (checker: Checker) => (value: unknown) => {
-    if (value === undefined) {
-        return Ok();
-    }
-    return checker(value);
-};
-
 const knownTypes = new Map<string, (field: string) => Checker>([
     [
         "TSBooleanKeyword",
