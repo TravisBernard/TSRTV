@@ -23,7 +23,7 @@
     },
     "homepage": "https://github.com/TravisBernard/result-util#readme",
     "dependencies": {
-        "@travbern/result-util": "^1.0.1",
+        "@travbern/result-util": "^1.0.2",
         "oxc-parser": "^0.82.3",
         "oxc-walker": "^0.4.0"
     },
@@ -38,15 +38,10 @@
         "dist"
     ],
     "exports": {
-        "./*": {
-            "import": {
-                "types": "./dist/types/*.d.ts",
-                "default": "./dist/esm/*.js"
-            },
-            "require": {
-                "types": "./dist/types/*.d.ts",
-                "default": "./dist/cjs/*.js"
-            }
+        ".": {
+            "import": "./dist/esm/index.js",
+            "require": "./dist/cjs/index.js",
+            "types": "./dist/types/index.d.ts"
         }
     },
     "main": "./dist/cjs/index.js",
