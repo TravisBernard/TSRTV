@@ -8,7 +8,7 @@
         "build:esm": "tsc",
         "build:cjs": "tsc -p tsconfig.cjs.json",
         "build": "npm run build:clean && npm run build:esm && npm run build:cjs",
-        "test": "tsx --test src/**/*.test.ts",
+        "test": "tsx --test",
         "check": "biome check .",
         "fix": "biome check . --write"
     },

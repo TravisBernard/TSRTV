@@ -1,6 +1,6 @@
 import { Err, Ok, type Result, unwrapOk } from "@travbern/result-util";
-import { parseFile, type Validation } from "./parse";
-import { locateTypeScriptFile } from "./pathResolution";
+import { type ImportTSFileOk, importTSFile } from "./file";
+import { parseCode, type Validation } from "./parse";
 import { createValidator, type Validator } from "./validation";
 
 export class GenerationError extends Error {}
@@ -13,11 +13,14 @@ export function createTypeValidator(
     path?: string,
 ): Result<Validator, GenerationError> {
     const startTime = Date.now();
-    let tsPath: string;
+    let resolvedPath: string;
+    let code: string;
     let validations: Validation[];
 
     try {
-        tsPath = unwrapOk(locateTypeScriptFile(path));
+        const imported = unwrapOk<ImportTSFileOk>(importTSFile(path));
+        code = imported.code;
+        resolvedPath = imported.resolvedPath;
     } catch (e) {
         return Err(
             new GenerationError(
@@ -27,7 +30,7 @@ export function createTypeValidator(
     }
 
     try {
-        validations = unwrapOk(parseFile(tsPath, type));
+        validations = unwrapOk(parseCode(resolvedPath, code, type));
     } catch (e) {
         return Err(
             new GenerationError(

@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import { Err, Ok, type Result, unwrapOk } from "@travbern/result-util";
 import type {
     TSInterfaceDeclaration,
@@ -16,36 +15,20 @@ export type Validation = {
     checkFn: Checker;
 };
 
-export function parseFile(
-    filePath: string,
+export function parseCode(
+    fileName: string,
+    code: string,
     target: string,
 ): Result<Validation[], ParseError> {
-    const ast = unwrapOk<AST>(fileToAST(filePath));
-    return createValidationsList(ast, target);
-}
-
-function fileToAST(filePath: string): Result<Program, ParseError> {
-    let tsCodeBuf: string;
-    try {
-        tsCodeBuf = fs.readFileSync(filePath, "utf-8");
-        if (tsCodeBuf.length === 0) {
-            throw new Error(`File is empty`); // this will get immediately caught
-        }
-    } catch (e) {
-        return Err(
-            new ParseError(`Error reading file ${filePath}: ${String(e)}`),
-        );
-    }
-
-    const { program: ast } = parseSync(filePath, tsCodeBuf);
+    const { program: ast } = parseSync(fileName, code);
 
     if (!ast) {
         return Err(
-            new ParseError(`Could not parse TypeScript file ${filePath}`),
+            new ParseError(`Could not parse TypeScript file ${fileName}`),
         );
     }
 
-    return Ok(ast);
+    return createValidationsList(ast, target);
 }
 
 function createValidationsList(
@@ -75,8 +58,11 @@ function createValidationsList(
                         node.type ===
                         "TSPropertySignature" /* || node.type === "TSMethodSignature" */
                     ) {
-                        const { name: field, optional = false } =
-                            node.key.type === "Identifier" ? node.key : {};
+                        const optional = node.optional ?? false;
+                        const field =
+                            node.key.type === "Identifier"
+                                ? node.key.name
+                                : undefined;
                         if (field) {
                             const typeAnnotation =
                                 node.typeAnnotation?.typeAnnotation?.type;
