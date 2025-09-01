@@ -24,8 +24,7 @@
     "homepage": "https://github.com/TravisBernard/result-util#readme",
     "dependencies": {
         "@travbern/result-util": "^1.0.2",
-        "oxc-parser": "^0.82.3",
-        "oxc-walker": "^0.4.0"
+        "oxc-parser": "^0.82.3"
     },
     "devDependencies": {
         "@biomejs/biome": "2.2.2",

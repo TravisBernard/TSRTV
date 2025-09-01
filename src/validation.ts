@@ -1,6 +1,11 @@
 import { Err, Ok, type Result, unwrapErrSilently } from "@travbern/result-util";
 import type { Validation } from "./parse";
 
+// TODO: support for nested objects
+// TODO: support for arrays
+// TODO: support for reusing other types
+// TODO: support for unions and intersections
+
 export type Validator = (data: unknown) => Result<undefined, string[]>;
 
 export class ValidationError extends Error {}
@@ -12,11 +17,11 @@ export function createValidator(validations: Validation[]): Validator {
         }
 
         const errors = validations.reduce<string[]>((acc, validation) => {
-            const err = unwrapErrSilently<string>(
+            const errs = unwrapErrSilently<string[]>(
                 validateOne(data as Record<string, unknown>, validation),
             );
-            if (err) {
-                acc.push(err);
+            if (errs) {
+                acc.push(...errs);
             }
             return acc;
         }, []);
@@ -28,14 +33,14 @@ export function createValidator(validations: Validation[]): Validator {
 function validateOne(
     data: Record<string, unknown>,
     validation: Validation,
-): Result<undefined, string> {
-    const { field, optional, checkFn } = validation;
-    if (!(field in data)) {
+): Result<undefined, string[]> {
+    const { field, flat = false, optional, typeValidator } = validation;
+    if (!flat && !(field in data)) {
         if (optional) {
             return Ok();
         } else {
-            return Err(`Missing required field: ${field}`);
+            return Err([`Missing required field: ${field}`]);
         }
     }
-    return checkFn(data[field]);
+    return typeValidator(flat ? data : data[field]);
 }

@@ -1,18 +1,20 @@
-import { Err, Ok, type Result, unwrapOk } from "@travbern/result-util";
+import { Err, Ok, type Result, unwrapOkSilently } from "@travbern/result-util";
 import type {
+    Node,
     TSInterfaceDeclaration,
     TSTypeAliasDeclaration,
 } from "oxc-parser";
 import { type Program, parseSync } from "oxc-parser";
-import { walk } from "oxc-walker";
-import { type Checker, getTypeChecker } from "./checkers";
+import type { Validator } from "./validation";
+import { getPrimitiveValidator } from "./validators/primitives";
 
 export class ParseError extends Error {}
 
 export type Validation = {
     field: string;
+    flat?: boolean;
     optional: boolean;
-    checkFn: Checker;
+    typeValidator: Validator;
 };
 
 export function parseCode(
@@ -31,70 +33,35 @@ export function parseCode(
     return createValidationsList(ast, target);
 }
 
+type AST = Program;
+
 function createValidationsList(
     ast: AST,
     target: string,
 ): Result<Validation[], ParseError> {
-    const validations: Validation[] = [];
-
-    let foundType: TSInterfaceDeclaration | TSTypeAliasDeclaration | null =
+    const nonTargetTypes: Map<string, Node> = new Map();
+    let targetNode: TSInterfaceDeclaration | TSTypeAliasDeclaration | null =
         null;
-    try {
-        walk(ast, {
-            enter(node) {
-                // Look for the target node
-                if (
-                    !foundType &&
-                    (node.type === "TSInterfaceDeclaration" ||
-                        node.type === "TSTypeAliasDeclaration") &&
-                    node.id.name === target
-                ) {
-                    foundType = node;
-                    return;
-                }
-                // Look for properties within the target node
-                if (foundType) {
-                    if (
-                        node.type ===
-                        "TSPropertySignature" /* || node.type === "TSMethodSignature" */
-                    ) {
-                        const optional = node.optional ?? false;
-                        const field =
-                            node.key.type === "Identifier"
-                                ? node.key.name
-                                : undefined;
-                        if (field) {
-                            const typeAnnotation =
-                                node.typeAnnotation?.typeAnnotation?.type;
-                            if (!typeAnnotation) {
-                                throw new Error(
-                                    `Unrecognized type annotation for field ${field}`,
-                                );
-                            }
-                            const validation: Partial<Validation> = {
-                                field,
-                                optional,
-                                checkFn: unwrapOk(
-                                    getTypeChecker({
-                                        field: field,
-                                        typeAnnotation,
-                                    }),
-                                ),
-                            };
 
-                            validations.push(validation as Validation);
-                        }
-                    }
+    try {
+        for (const node of ast.body) {
+            if (
+                node.type === "TSInterfaceDeclaration" ||
+                node.type === "TSTypeAliasDeclaration"
+            ) {
+                if (node.id.name === target) {
+                    targetNode = node;
+                } else {
+                    nonTargetTypes.set(node.id.name, node);
                 }
-            },
-            leave(node) {
-                if (node === foundType) {
-                    foundType = null;
-                    return false;
-                }
-            },
-        });
-        return Ok(validations);
+            }
+        }
+
+        if (!targetNode) {
+            return Err(new ParseError(`Type ${target} not found in AST`));
+        }
+
+        return Ok(processTSDeclaration(targetNode, nonTargetTypes));
     } catch (e) {
         return Err(
             new ParseError(
@@ -104,4 +71,54 @@ function createValidationsList(
     }
 }
 
-type AST = Program;
+function processTSDeclaration(
+    node: TSTypeAliasDeclaration | TSInterfaceDeclaration,
+    nonTargetTypes: Map<string, Node>,
+): Validation[] {
+    switch (node.type) {
+        case "TSTypeAliasDeclaration":
+            return processTypeAliasDeclaration(node, nonTargetTypes);
+        // case "TSInterfaceDeclaration":
+        //     processInterfaceDeclaration(node, nonTargetTypes);
+        //     break;
+        default:
+            throw new ParseError(`Unsupported node type: ${node.type}`);
+    }
+}
+
+function processTypeAliasDeclaration(
+    node: TSTypeAliasDeclaration,
+    _nonTargetTypes: Map<string, Node>,
+): Validation[] {
+    const { id, typeAnnotation } = node;
+    switch (typeAnnotation.type) {
+        case "TSTypeLiteral":
+            // TODO:
+            return [];
+        case "TSTypeReference":
+            // TODO:
+            return [];
+        default: {
+            const checker = unwrapOkSilently<Validator>(
+                getPrimitiveValidator({
+                    field: id.name,
+                    typeAnnotation: typeAnnotation.type,
+                }),
+            );
+            if (checker) {
+                return [
+                    {
+                        field: id.name,
+                        flat: true,
+                        optional: false,
+                        typeValidator: checker,
+                    },
+                ];
+            } else {
+                throw new ParseError(
+                    `Unsupported or unknown type reference: ${typeAnnotation.type}`,
+                );
+            }
+        }
+    }
+}
